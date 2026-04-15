@@ -28,51 +28,64 @@ if not st.session_state.auth:
 # -------------------------------
 # 기본 설정
 # -------------------------------
-st.set_page_config(page_title="뉴스 인사이트 대시보드", layout="wide")
+st.set_page_config(page_title="뉴스 인사이트", layout="wide")
 
 # -------------------------------
-# GPT 요약 (OpenAI API 필요)
+# GPT 요약 (테스트용 기본)
 # -------------------------------
 def gpt_summary(title):
-    try:
-        import openai
+    return f"""
+📌 요약
+- {title}
+- 산업/시장 관련 주요 이슈
+- 향후 영향 가능성 존재
 
-        openai.api_key = "YOUR_API_KEY"
+📌 선정 이유
+- 시장/기업 영향 가능성 있는 뉴스
 
-        prompt = f"""
-        다음 뉴스 제목을 기반으로:
+📌 인사이트
+- 관련 산업 흐름 및 투자 판단 참고 필요
+"""
 
-        1. 3줄 요약
-        2. 이 뉴스가 중요한 이유
-        3. 얻을 수 있는 인사이트
+# 👉 실제 GPT 쓰려면 이걸로 교체
+"""
+def gpt_summary(title):
+    import openai
+    openai.api_key = "YOUR_API_KEY"
 
-        뉴스: {title}
-        """
+    prompt = f'''
+    뉴스 제목 기반으로 아래 작성:
+    1. 3줄 요약
+    2. 선정 이유
+    3. 인사이트
 
-        res = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200
-        )
+    뉴스: {title}
+    '''
 
-        return res.choices[0].message.content
+    res = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200
+    )
 
-    except:
-        return "⚠️ GPT 요약 실패 (API 키 확인 필요)"
-
-
+    return res.choices[0].message.content
+"""
 # -------------------------------
-# 중요 뉴스 필터 키워드
+# 중요도 점수 (필터 ❌ → 정렬용)
 # -------------------------------
-IMPORTANT_KEYWORDS = [
-    "시장", "점유율", "경쟁", "규제", "법안", "리스크",
-    "공급망", "투자", "인수", "합병", "M&A",
-    "지분", "물류", "AI", "반도체", "배터리"
-]
+def importance_score(title):
+    keywords = [
+        "시장","경쟁","규제","투자","인수","합병",
+        "삼성","LG","애플","테슬라",
+        "AI","반도체","금리","환율","배터리"
+    ]
 
-def is_important(title):
-    return any(k in title for k in IMPORTANT_KEYWORDS)
+    score = 0
+    for k in keywords:
+        if k in title:
+            score += 1
 
+    return score
 
 # -------------------------------
 # 네이버 크롤링
@@ -118,7 +131,6 @@ def crawl_naver(url, category_name):
     except:
         return []
 
-
 # -------------------------------
 # 카테고리
 # -------------------------------
@@ -157,15 +169,15 @@ with st.spinner("뉴스 불러오는 중..."):
         news_data = crawl_naver(category_dict[category], category)
 
 # -------------------------------
-# 중요 뉴스 필터
-# -------------------------------
-news_data = [n for n in news_data if is_important(n["title"])]
-
-# -------------------------------
 # 키워드 필터
 # -------------------------------
 if keyword_input:
     news_data = [n for n in news_data if keyword_input in n["title"]]
+
+# -------------------------------
+# 중요도 정렬 (핵심)
+# -------------------------------
+news_data.sort(key=lambda x: importance_score(x["title"]), reverse=True)
 
 # -------------------------------
 # 중복 제거
@@ -178,7 +190,7 @@ for n in news_data:
         unique_news.append(n)
         seen.add(n["title"])
 
-news_data = unique_news[:20]
+news_data = unique_news[:30]
 
 # -------------------------------
 # UI 출력
@@ -186,7 +198,7 @@ news_data = unique_news[:20]
 st.title("🧠 전략형 뉴스 인사이트")
 
 if not news_data:
-    st.error("❌ 조건에 맞는 뉴스 없음")
+    st.error("❌ 뉴스 없음 (조건 줄여보세요)")
 else:
     for news in news_data:
 
@@ -203,10 +215,8 @@ else:
             st.caption(f"{news['category']} | {news['time']}")
             st.markdown(f"[👉 기사 보기]({news['link']})")
 
-            # GPT 분석
             with st.expander("🤖 AI 분석 보기"):
-                result = gpt_summary(news["title"])
-                st.write(result)
+                st.write(gpt_summary(news["title"]))
 
 # -------------------------------
 # 데이터 테이블
