@@ -89,9 +89,12 @@ category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
 
 keyword_input = st.sidebar.text_input("키워드 (쉼표로 구분)")
 
-time_filter = st.sidebar.selectbox(
-    "뉴스 시간 범위",
-    ["전체", "1시간 이내", "3시간 이내", "6시간 이내", "24시간 이내"]
+time_value = st.sidebar.number_input(
+    "몇 시간 이내 뉴스 (0 = 전체)",
+    min_value=0,
+    max_value=48,
+    value=0,
+    step=1
 )
 
 refresh = st.sidebar.button("🔄 새로고침")
@@ -118,23 +121,14 @@ if keyword_input:
 # -------------------------------
 # 시간 필터
 # -------------------------------
-if time_filter != "전체":
-    hour_map = {
-        "1시간 이내": 1,
-        "3시간 이내": 3,
-        "6시간 이내": 6,
-        "24시간 이내": 24
-    }
-
-    hours = hour_map[time_filter]
-
+if time_value > 0:
     news_data = [
         n for n in news_data
-        if is_recent(n["time"], hours)
+        if is_recent(n["time"], time_value)
     ]
 
 # -------------------------------
-# 중복 제거 (제목 기준)
+# 중복 제거
 # -------------------------------
 seen_titles = set()
 unique_news = []
@@ -154,12 +148,18 @@ news_data = unique_news[:20]
 # -------------------------------
 st.title("📰 실시간 뉴스")
 
+if time_value > 0:
+    st.write(f"⏱ 최근 {time_value}시간 이내 뉴스")
+
 for news in news_data:
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([1, 3])  # 이미지 영역 줄임
 
     with col1:
         if news["img"]:
-            st.image(news["img"], use_container_width=True)
+            st.markdown(
+                f'<img src="{news["img"]}" style="width:33%; border-radius:8px;">',
+                unsafe_allow_html=True
+            )
 
     with col2:
         st.markdown(f"### {news['title']}")
