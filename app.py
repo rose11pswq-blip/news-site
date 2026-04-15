@@ -1,51 +1,9 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import re
 
-# -------------------------------
-# 페이지 설정
-# -------------------------------
-st.set_page_config(
-    page_title="Strategic Intelligence",
-    page_icon="🧠",
-    layout="wide"
-)
-
-# -------------------------------
-# UI 스타일 (유지)
-# -------------------------------
-st.markdown("""
-<style>
-body { background-color: #f4f6f9; }
-
-.main-title {
-    font-size: 34px;
-    font-weight: 700;
-    color: #1a2a4f;
-}
-
-.sub-title {
-    color: #6b7a99;
-    font-size: 13px;
-}
-
-.search-box {
-    background: white;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0px 3px 10px rgba(0,0,0,0.05);
-    margin-bottom: 20px;
-}
-
-.news-card {
-    background: white;
-    padding: 18px;
-    border-radius: 12px;
-    margin-bottom: 18px;
-    box-shadow: 0px 4px 12px rgba(0,0,0,0.04);
-}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Strategic Intelligence", layout="wide")
 
 # -------------------------------
 # 비밀번호
@@ -56,17 +14,27 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.markdown("## 🔐 Private Access")
     pw = st.text_input("비밀번호", type="password")
-
     if st.button("입장"):
         if pw == PASSWORD:
             st.session_state.auth = True
             st.rerun()
-        else:
-            st.error("비밀번호 오류")
-
     st.stop()
+
+# -------------------------------
+# 시간 파싱 함수 🔥
+# -------------------------------
+def parse_time(text):
+    try:
+        if "분 전" in text:
+            return int(re.findall(r'\d+', text)[0]) / 60
+        if "시간 전" in text:
+            return int(re.findall(r'\d+', text)[0])
+        if "일 전" in text:
+            return int(re.findall(r'\d+', text)[0]) * 24
+    except:
+        return 999
+    return 999
 
 # -------------------------------
 # 네이버 뉴스
@@ -89,10 +57,14 @@ def crawl_naver(keyword):
             img_tag = item.select_one("img")
             img_url = img_tag["src"] if img_tag else None
 
+            info = item.select_one(".info_group").text
+            time_value = parse_time(info)
+
             news.append({
                 "title": title,
                 "link": link,
                 "img": img_url,
+                "time": time_value,
                 "source": "NAVER"
             })
         except:
@@ -122,6 +94,7 @@ def crawl_google(keyword):
                 "title": title,
                 "link": link,
                 "img": None,
+                "time": 999,  # 시간 없음 → 필터에서 제외됨
                 "source": "GOOGLE"
             })
         except:
@@ -144,24 +117,18 @@ def analyze(title):
     return "핵심 뉴스", "추가 분석 필요"
 
 # -------------------------------
-# 상태
-# -------------------------------
-if "keyword" not in st.session_state:
-    st.session_state.keyword = "경제"
-
-# -------------------------------
 # UI
 # -------------------------------
-st.markdown("<div class='main-title'>Strategic Intelligence</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>made by sw.park</div>", unsafe_allow_html=True)
+st.title("Strategic Intelligence")
+st.caption("made by sw.park")
 
-st.markdown("<div class='search-box'>", unsafe_allow_html=True)
+col1, col2 = st.columns([3,1])
 
-keyword = st.text_input("🔍 키워드 (쉼표 가능)", value=st.session_state.keyword)
+with col1:
+    keyword = st.text_input("🔍 키워드 (쉼표 가능)", value="경제")
 
-st.markdown("</div>", unsafe_allow_html=True)
-
-st.session_state.keyword = keyword
+with col2:
+    hours = st.number_input("시간 (시간 단위)", 0, 48, 24)
 
 # -------------------------------
 # 실행
@@ -175,12 +142,17 @@ for kw in keywords:
     all_news.extend(crawl_google(kw))
 
 # -------------------------------
+# 시간 필터 🔥
+# -------------------------------
+filtered = [n for n in all_news if n["time"] <= hours]
+
+# -------------------------------
 # 중복 제거
 # -------------------------------
 seen = set()
 result = []
 
-for n in all_news:
+for n in filtered:
     if n["title"] not in seen:
         result.append(n)
         seen.add(n["title"])
@@ -194,18 +166,16 @@ if result:
     for n in result:
         reason, insight = analyze(n["title"])
 
-        st.markdown("<div class='news-card'>", unsafe_allow_html=True)
+        st.markdown("---")
 
         if n["img"]:
             st.image(n["img"], width=150)
 
         st.markdown(f"### {n['title']}")
         st.markdown(f"[기사 보기]({n['link']})")
-        st.caption(f"출처: {n['source']}")
+        st.caption(f"{n['source']} | {n['time']}시간 이내")
 
         st.write(f"📌 {reason}")
         st.write(f"💡 {insight}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.warning("검색 결과가 없습니다.")
