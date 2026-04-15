@@ -3,15 +3,30 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime, timedelta
-from dateutil import parser
 
 # -------------------------------
-# 기본 설정 (SaaS 스타일)
+# 기본 설정
 # -------------------------------
-st.set_page_config(
-    page_title="News Intelligence",
-    layout="wide"
-)
+st.set_page_config(layout="wide")
+
+# -------------------------------
+# 비밀번호 인증
+# -------------------------------
+PASSWORD = "duddjqqhsqn1!"
+
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
+if not st.session_state.auth:
+    st.markdown("## 🔐 Strategic Intelligence Access")
+    pw = st.text_input("비밀번호", type="password")
+    if st.button("입장"):
+        if pw == PASSWORD:
+            st.session_state.auth = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 틀렸습니다.")
+    st.stop()
 
 # -------------------------------
 # CSS (맥킨지 스타일)
@@ -19,83 +34,92 @@ st.set_page_config(
 st.markdown("""
 <style>
 body {
-    background-color: #f7f9fc;
+    background-color: #f5f7fb;
+}
+.header {
+    font-size: 34px;
+    font-weight: 700;
+}
+.sub {
+    color: #6b7280;
+    margin-bottom: 20px;
 }
 .card {
     background: white;
     padding: 20px;
-    border-radius: 14px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    border-radius: 12px;
+    margin-bottom: 15px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
     transition: 0.2s;
 }
 .card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 6px 18px rgba(0,0,0,0.1);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
 }
 .title {
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 600;
-    margin-bottom: 8px;
 }
 .meta {
-    font-size: 13px;
+    font-size: 12px;
     color: gray;
 }
-.header {
-    font-size: 32px;
-    font-weight: 700;
+.link {
+    font-size: 14px;
+    color: #2563eb;
 }
-.sub {
-    color: gray;
-    margin-bottom: 20px;
+.kpi {
+    font-size: 22px;
+    font-weight: 600;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # -------------------------------
-# Google News 크롤링
+# 네이버 뉴스 크롤링 (개선 버전)
 # -------------------------------
 @st.cache_data(ttl=300)
-def get_news(keyword):
-    url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
-    res = requests.get(url)
-    soup = BeautifulSoup(res.text, "xml")
+def crawl_naver_news():
+    url = "https://news.naver.com/main/list.naver?mode=LSD&mid=sec&sid1=101"
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-    items = soup.find_all("item")
+    res = requests.get(url, headers=headers)
+    soup = BeautifulSoup(res.text, "html.parser")
 
     news_list = []
-    for item in items:
-        title = item.title.text
-        link = item.link.text
-        pub_date = parser.parse(item.pubDate.text)
 
-        news_list.append({
-            "title": title,
-            "link": link,
-            "time": pub_date
-        })
+    articles = soup.select("ul.type06_headline li, ul.type06 li")
+
+    for article in articles:
+        try:
+            a_tag = article.select_one("a")
+            title = a_tag.text.strip()
+            link = a_tag["href"]
+
+            # 네이버 상대경로 대응
+            if link.startswith("/"):
+                link = "https://news.naver.com" + link
+
+            img_tag = article.select_one("img")
+            img = img_tag["src"] if img_tag else None
+
+            news_list.append({
+                "title": title,
+                "link": link,
+                "img": img,
+                "time": datetime.now().strftime("%H:%M")
+            })
+
+        except:
+            continue
 
     return news_list
 
 # -------------------------------
-# 시간 필터
+# UI 헤더
 # -------------------------------
-def filter_time(news, hours):
-    if hours == 0:
-        return news
-
-    now = datetime.utcnow()
-    filtered = [
-        n for n in news
-        if (now - n["time"]) <= timedelta(hours=hours)
-    ]
-    return filtered
-
-# -------------------------------
-# UI - 헤더
-# -------------------------------
-st.markdown('<div class="header">🧠 News Intelligence Dashboard</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub">실시간 키워드 기반 뉴스 분석 시스템</div>', unsafe_allow_html=True)
+st.markdown('<div class="header">🧠 Strategic Intelligence</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub">Real-time News Monitoring System</div>', unsafe_allow_html=True)
 
 # -------------------------------
 # 입력 영역
@@ -103,10 +127,10 @@ st.markdown('<div class="sub">실시간 키워드 기반 뉴스 분석 시스템
 col1, col2, col3 = st.columns([3,1,1])
 
 with col1:
-    keyword = st.text_input("🔍 키워드 입력 (쉼표로 여러 개)", placeholder="예: AI, 금리, 부동산")
+    keyword = st.text_input("🔍 키워드 (쉼표 구분)", value="경제")
 
 with col2:
-    hours = st.number_input("⏱ 시간(시간)", 0, 48, 0)
+    limit = st.number_input("📊 뉴스 개수", 1, 50, 20)
 
 with col3:
     refresh = st.button("🔄 Refresh")
@@ -117,60 +141,47 @@ if refresh:
 # -------------------------------
 # 데이터 처리
 # -------------------------------
-if keyword:
-    keywords = [k.strip() for k in keyword.split(",")]
+raw_news = crawl_naver_news()
 
-    all_news = []
+keywords = [k.strip().lower() for k in keyword.split(",")]
 
-    for k in keywords:
-        try:
-            all_news.extend(get_news(k))
-        except:
-            pass
+filtered = [
+    n for n in raw_news
+    if any(k in n["title"].lower() for k in keywords)
+]
 
-    # 중복 제거
-    seen = set()
-    unique_news = []
-    for n in all_news:
-        if n["title"] not in seen:
-            unique_news.append(n)
-            seen.add(n["title"])
+# 중복 제거
+seen = set()
+result = []
 
-    # 시간 필터
-    news_data = filter_time(unique_news, hours)
+for n in filtered:
+    if n["title"] not in seen:
+        result.append(n)
+        seen.add(n["title"])
 
-    # 최신순 정렬
-    news_data = sorted(news_data, key=lambda x: x["time"], reverse=True)
+result = result[:limit]
 
-    # 상위 20개
-    news_data = news_data[:20]
+# -------------------------------
+# KPI 영역
+# -------------------------------
+st.markdown(f'<div class="kpi">📊 뉴스 {len(result)}건 분석 중</div>', unsafe_allow_html=True)
 
-    # -------------------------------
-    # KPI
-    # -------------------------------
-    st.markdown(f"### 📊 총 뉴스 수: {len(news_data)}")
+# -------------------------------
+# 카드 UI 출력
+# -------------------------------
+for n in result:
+    st.markdown(f"""
+    <div class="card">
+        <div class="title">{n['title']}</div>
+        <div class="meta">🕒 {n['time']}</div>
+        <br>
+        <a class="link" href="{n['link']}" target="_blank">👉 기사 보기</a>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # -------------------------------
-    # 카드 UI 출력
-    # -------------------------------
-    for news in news_data:
-        time_str = news["time"].strftime("%Y-%m-%d %H:%M")
-
-        st.markdown(f"""
-        <div class="card">
-            <div class="title">{news['title']}</div>
-            <div class="meta">🕒 {time_str}</div>
-            <br>
-            <a href="{news['link']}" target="_blank">👉 기사 원문 보기</a>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # -------------------------------
-    # 데이터 테이블
-    # -------------------------------
-    with st.expander("📊 데이터 보기"):
-        df = pd.DataFrame(news_data)
-        st.dataframe(df)
-
-else:
-    st.info("키워드를 입력하세요.")
+# -------------------------------
+# 데이터 테이블
+# -------------------------------
+with st.expander("📊 데이터 보기"):
+    df = pd.DataFrame(result)
+    st.dataframe(df)
