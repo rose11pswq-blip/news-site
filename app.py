@@ -2,174 +2,175 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import datetime
+from datetime import datetime, timedelta
+from dateutil import parser
 
 # -------------------------------
-# 기본 설정
+# 기본 설정 (SaaS 스타일)
 # -------------------------------
 st.set_page_config(
-    page_title="실시간 뉴스 사이트",
-    page_icon="📰",
+    page_title="News Intelligence",
     layout="wide"
 )
 
 # -------------------------------
-# 크롤링 함수
+# CSS (맥킨지 스타일)
+# -------------------------------
+st.markdown("""
+<style>
+body {
+    background-color: #f7f9fc;
+}
+.card {
+    background: white;
+    padding: 20px;
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    transition: 0.2s;
+}
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.1);
+}
+.title {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.meta {
+    font-size: 13px;
+    color: gray;
+}
+.header {
+    font-size: 32px;
+    font-weight: 700;
+}
+.sub {
+    color: gray;
+    margin-bottom: 20px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -------------------------------
+# Google News 크롤링
 # -------------------------------
 @st.cache_data(ttl=300)
-def crawl_news(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
+def get_news(keyword):
+    url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
+    res = requests.get(url)
+    soup = BeautifulSoup(res.text, "xml")
+
+    items = soup.find_all("item")
 
     news_list = []
-    articles = soup.select(".sa_item")
+    for item in items:
+        title = item.title.text
+        link = item.link.text
+        pub_date = parser.parse(item.pubDate.text)
 
-    for article in articles:
-        try:
-            title = article.select_one(".sa_text_title").text.strip()
-            link = article.select_one("a")["href"]
-
-            # 이미지
-            img_tag = article.select_one("img")
-            img_url = None
-            if img_tag:
-                img_url = img_tag.get("data-src") or img_tag.get("src")
-
-            # 시간
-            time_tag = article.select_one(".sa_text_datetime")
-            time_text = time_tag.text.strip() if time_tag else ""
-
-            news_list.append({
-                "title": title,
-                "link": link,
-                "img": img_url,
-                "time": time_text
-            })
-        except:
-            continue
+        news_list.append({
+            "title": title,
+            "link": link,
+            "time": pub_date
+        })
 
     return news_list
 
 # -------------------------------
-# 시간 필터 함수
+# 시간 필터
 # -------------------------------
-def is_recent(news_time, hours):
-    try:
-        if "분 전" in news_time:
-            minutes = int(news_time.replace("분 전", ""))
-            return minutes <= hours * 60
-        elif "시간 전" in news_time:
-            h = int(news_time.replace("시간 전", ""))
-            return h <= hours
-        elif "일 전" in news_time:
-            return False
-    except:
-        return True
-    return True
+def filter_time(news, hours):
+    if hours == 0:
+        return news
+
+    now = datetime.utcnow()
+    filtered = [
+        n for n in news
+        if (now - n["time"]) <= timedelta(hours=hours)
+    ]
+    return filtered
 
 # -------------------------------
-# 카테고리
+# UI - 헤더
 # -------------------------------
-category_dict = {
-    "정치": "https://news.naver.com/section/100",
-    "경제": "https://news.naver.com/section/101",
-    "사회": "https://news.naver.com/section/102",
-    "생활/문화": "https://news.naver.com/section/103",
-    "세계": "https://news.naver.com/section/104",
-    "IT/과학": "https://news.naver.com/section/105"
-}
+st.markdown('<div class="header">🧠 News Intelligence Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub">실시간 키워드 기반 뉴스 분석 시스템</div>', unsafe_allow_html=True)
 
 # -------------------------------
-# 사이드바
+# 입력 영역
 # -------------------------------
-st.sidebar.title("⚙️ 설정")
+col1, col2, col3 = st.columns([3,1,1])
 
-category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
+with col1:
+    keyword = st.text_input("🔍 키워드 입력 (쉼표로 여러 개)", placeholder="예: AI, 금리, 부동산")
 
-keyword_input = st.sidebar.text_input("키워드 (쉼표로 구분)")
+with col2:
+    hours = st.number_input("⏱ 시간(시간)", 0, 48, 0)
 
-time_value = st.sidebar.number_input(
-    "몇 시간 이내 뉴스 (0 = 전체)",
-    min_value=0,
-    max_value=48,
-    value=0,
-    step=1
-)
+with col3:
+    refresh = st.button("🔄 Refresh")
 
-refresh = st.sidebar.button("🔄 새로고침")
-
-# -------------------------------
-# 데이터 가져오기
-# -------------------------------
 if refresh:
     st.cache_data.clear()
 
-news_data = crawl_news(category_dict[category])
-
 # -------------------------------
-# 키워드 필터
+# 데이터 처리
 # -------------------------------
-if keyword_input:
-    keywords = [k.strip().lower() for k in keyword_input.split(",")]
+if keyword:
+    keywords = [k.strip() for k in keyword.split(",")]
 
-    news_data = [
-        n for n in news_data
-        if any(k in n["title"].lower() for k in keywords)
-    ]
+    all_news = []
 
-# -------------------------------
-# 시간 필터
-# -------------------------------
-if time_value > 0:
-    news_data = [
-        n for n in news_data
-        if is_recent(n["time"], time_value)
-    ]
+    for k in keywords:
+        try:
+            all_news.extend(get_news(k))
+        except:
+            pass
 
-# -------------------------------
-# 중복 제거
-# -------------------------------
-seen_titles = set()
-unique_news = []
+    # 중복 제거
+    seen = set()
+    unique_news = []
+    for n in all_news:
+        if n["title"] not in seen:
+            unique_news.append(n)
+            seen.add(n["title"])
 
-for n in news_data:
-    if n["title"] not in seen_titles:
-        unique_news.append(n)
-        seen_titles.add(n["title"])
+    # 시간 필터
+    news_data = filter_time(unique_news, hours)
 
-# -------------------------------
-# 20개 제한
-# -------------------------------
-news_data = unique_news[:20]
+    # 최신순 정렬
+    news_data = sorted(news_data, key=lambda x: x["time"], reverse=True)
 
-# -------------------------------
-# UI 출력
-# -------------------------------
-st.title("📰 실시간 뉴스")
+    # 상위 20개
+    news_data = news_data[:20]
 
-if time_value > 0:
-    st.write(f"⏱ 최근 {time_value}시간 이내 뉴스")
+    # -------------------------------
+    # KPI
+    # -------------------------------
+    st.markdown(f"### 📊 총 뉴스 수: {len(news_data)}")
 
-for news in news_data:
-    col1, col2 = st.columns([1, 3])  # 이미지 영역 줄임
+    # -------------------------------
+    # 카드 UI 출력
+    # -------------------------------
+    for news in news_data:
+        time_str = news["time"].strftime("%Y-%m-%d %H:%M")
 
-    with col1:
-        if news["img"]:
-            st.markdown(
-                f'<img src="{news["img"]}" style="width:33%; border-radius:8px;">',
-                unsafe_allow_html=True
-            )
+        st.markdown(f"""
+        <div class="card">
+            <div class="title">{news['title']}</div>
+            <div class="meta">🕒 {time_str}</div>
+            <br>
+            <a href="{news['link']}" target="_blank">👉 기사 원문 보기</a>
+        </div>
+        """, unsafe_allow_html=True)
 
-    with col2:
-        st.markdown(f"### {news['title']}")
-        st.markdown(f"[👉 기사 보러가기]({news['link']})")
-        if news["time"]:
-            st.caption(f"⏱ {news['time']}")
+    # -------------------------------
+    # 데이터 테이블
+    # -------------------------------
+    with st.expander("📊 데이터 보기"):
+        df = pd.DataFrame(news_data)
+        st.dataframe(df)
 
-# -------------------------------
-# 데이터 테이블
-# -------------------------------
-with st.expander("📊 데이터 보기"):
-    df = pd.DataFrame(news_data)
-    st.dataframe(df)
+else:
+    st.info("키워드를 입력하세요.")
