@@ -1,119 +1,91 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import pandas as pd
+
+st.set_page_config(page_title="실시간 뉴스", layout="wide")
 
 # -------------------------------
-# 페이지 설정
-# -------------------------------
-st.set_page_config(
-    page_title="Strategic Intelligence",
-    page_icon="🧠",
-    layout="wide"
-)
-
-# -------------------------------
-# UI 스타일
-# -------------------------------
-st.markdown("""
-<style>
-body { background-color: #f4f6f9; }
-
-.main-title {
-    font-size: 34px;
-    font-weight: 700;
-    color: #1a2a4f;
-}
-
-.sub-title {
-    color: #6b7a99;
-    font-size: 13px;
-}
-
-.search-box {
-    background: white;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0px 3px 10px rgba(0,0,0,0.05);
-    margin-bottom: 20px;
-}
-
-.news-card {
-    background: white;
-    padding: 18px;
-    border-radius: 12px;
-    margin-bottom: 18px;
-    box-shadow: 0px 4px 12px rgba(0,0,0,0.04);
-}
-
-.reason {
-    background: #eef2ff;
-    padding: 8px;
-    border-radius: 6px;
-    font-size: 13px;
-}
-
-.insight {
-    background: #f5f7ff;
-    padding: 8px;
-    border-radius: 6px;
-    font-size: 13px;
-    margin-top: 5px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# -------------------------------
-# 비밀번호
-# -------------------------------
-PASSWORD = "duddjqqhsqn1!"
-
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-
-if not st.session_state.auth:
-    st.markdown("## 🔐 Private Access")
-    pw = st.text_input("비밀번호", type="password")
-
-    if st.button("입장"):
-        if pw == PASSWORD:
-            st.session_state.auth = True
-            st.rerun()
-        else:
-            st.error("비밀번호 오류")
-
-    st.stop()
-
-# -------------------------------
-# 크롤링
+# 네이버 뉴스 크롤링
 # -------------------------------
 @st.cache_data(ttl=300)
-def crawl_news():
-    url = "https://news.naver.com/"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
+def crawl_naver(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://news.naver.com/"
+    }
 
-    news = []
-    for a in soup.select(".sa_item"):
-        try:
-            title = a.select_one(".sa_text_title").text.strip()
-            link = a.select_one("a")["href"]
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code != 200:
+            return []
 
-            img = a.select_one("img")
-            img_url = img.get("data-src") if img else None
+        soup = BeautifulSoup(res.text, "html.parser")
 
-            time_tag = a.select_one(".sa_text_datetime")
-            time_text = time_tag.text.strip() if time_tag else ""
+        # 최신 대응 선택자
+        articles = soup.select("li.sa_item, div.sa_item")
 
-            news.append({
-                "title": title,
-                "link": link,
-                "img": img_url,
-                "time": time_text
+        news_list = []
+
+        for article in articles:
+            try:
+                title_tag = article.select_one(".sa_text_title")
+                if not title_tag:
+                    continue
+
+                title = title_tag.text.strip()
+                link = article.select_one("a")["href"]
+
+                img_tag = article.select_one("img")
+                img_url = None
+                if img_tag:
+                    img_url = img_tag.get("data-src") or img_tag.get("src")
+
+                time_tag = article.select_one(".sa_text_datetime")
+                time_text = time_tag.text.strip() if time_tag else ""
+
+                news_list.append({
+                    "title": title,
+                    "link": link,
+                    "img": img_url,
+                    "time": time_text
+                })
+
+            except:
+                continue
+
+        return news_list
+
+    except:
+        return []
+
+
+# -------------------------------
+# 구글 뉴스 (fallback)
+# -------------------------------
+@st.cache_data(ttl=300)
+def crawl_google(keyword):
+    url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
+
+    try:
+        res = requests.get(url, timeout=5)
+        soup = BeautifulSoup(res.text, "xml")
+
+        news_list = []
+
+        for item in soup.find_all("item")[:20]:
+            news_list.append({
+                "title": item.title.text,
+                "link": item.link.text,
+                "img": None,
+                "time": item.pubDate.text
             })
-        except:
-            continue
-    return news
+
+        return news_list
+
+    except:
+        return []
+
 
 # -------------------------------
 # 시간 필터
@@ -121,117 +93,104 @@ def crawl_news():
 def is_recent(news_time, hours):
     try:
         if "분 전" in news_time:
-            return int(news_time.replace("분 전","")) <= hours * 60
+            return int(news_time.replace("분 전", "")) <= hours * 60
         elif "시간 전" in news_time:
-            return int(news_time.replace("시간 전","")) <= hours
+            return int(news_time.replace("시간 전", "")) <= hours
+        elif "일 전" in news_time:
+            return False
     except:
         return True
     return True
 
-# -------------------------------
-# 분석
-# -------------------------------
-def analyze(title):
-    if "시장" in title:
-        return "시장 구조 변화", "시장 재편 가능성"
-    if "경쟁" in title:
-        return "경쟁사 동향", "경쟁 심화 가능성"
-    if "규제" in title:
-        return "규제 리스크", "사업 영향 가능"
-    if "투자" in title or "M&A" in title:
-        return "투자 이벤트", "기업 가치 변화"
-    if "공급망" in title:
-        return "공급망 리스크", "비용 영향"
-    return "핵심 뉴스", "추가 분석 필요"
 
 # -------------------------------
-# 상태 초기화 (핵심🔥)
+# 카테고리
 # -------------------------------
-if "keyword" not in st.session_state:
-    st.session_state.keyword = ""
-
-if "time_value" not in st.session_state:
-    st.session_state.time_value = 24  # 기본값 24시간
-
-# -------------------------------
-# 헤더
-# -------------------------------
-st.markdown("<div class='main-title'>Strategic Intelligence</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>made by sw.park</div>", unsafe_allow_html=True)
+category_dict = {
+    "정치": "https://news.naver.com/section/100",
+    "경제": "https://news.naver.com/section/101",
+    "사회": "https://news.naver.com/section/102",
+    "생활/문화": "https://news.naver.com/section/103",
+    "세계": "https://news.naver.com/section/104",
+    "IT/과학": "https://news.naver.com/section/105"
+}
 
 # -------------------------------
-# 검색 UI
+# 사이드바
 # -------------------------------
-st.markdown("<div class='search-box'>", unsafe_allow_html=True)
+st.sidebar.title("⚙️ 설정")
 
-col1, col2 = st.columns([3,1])
-
-with col1:
-    keyword = st.text_input(
-        "🔍 키워드 입력 (쉼표 가능)",
-        value=st.session_state.keyword
-    )
-
-with col2:
-    time_value = st.number_input(
-        "시간",
-        0, 48,
-        value=st.session_state.time_value
-    )
-
-st.markdown("</div>", unsafe_allow_html=True)
+category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
+keyword_input = st.sidebar.text_input("키워드 (쉼표 구분)")
+time_value = st.sidebar.slider("몇 시간 이내", 0, 48, 0)
 
 # -------------------------------
-# 상태 업데이트
+# 데이터 가져오기 (자동 실행)
 # -------------------------------
-st.session_state.keyword = keyword
-st.session_state.time_value = time_value
+with st.spinner("뉴스 불러오는 중..."):
+
+    news_data = crawl_naver(category_dict[category])
+
+    # 네이버 실패 시 자동 fallback
+    if len(news_data) == 0:
+        st.warning("⚠️ 네이버 뉴스 실패 → 구글 뉴스로 대체합니다")
+        search_keyword = keyword_input if keyword_input else "한국"
+        news_data = crawl_google(search_keyword)
 
 # -------------------------------
-# 🔥 항상 실행 (핵심 수정)
-# -------------------------------
-data = crawl_news()
-
 # 키워드 필터
-if keyword:
-    kws = [k.strip().lower() for k in keyword.split(",")]
-    data = [n for n in data if any(k in n["title"].lower() for k in kws)]
+# -------------------------------
+if keyword_input:
+    keywords = [k.strip().lower() for k in keyword_input.split(",")]
+    news_data = [
+        n for n in news_data
+        if any(k in n["title"].lower() for k in keywords)
+    ]
 
+# -------------------------------
 # 시간 필터
+# -------------------------------
 if time_value > 0:
-    data = [n for n in data if is_recent(n["time"], time_value)]
+    news_data = [
+        n for n in news_data if is_recent(n["time"], time_value)
+    ]
 
+# -------------------------------
 # 중복 제거
+# -------------------------------
 seen = set()
-result = []
-for n in data:
+unique_news = []
+
+for n in news_data:
     if n["title"] not in seen:
-        result.append(n)
+        unique_news.append(n)
         seen.add(n["title"])
 
-result = result[:20]
+news_data = unique_news[:20]
 
 # -------------------------------
-# 결과 출력
+# UI 출력
 # -------------------------------
-if result:
-    for n in result:
-        reason, insight = analyze(n["title"])
+st.title("📰 실시간 뉴스")
 
-        st.markdown("<div class='news-card'>", unsafe_allow_html=True)
-
-        if n["img"]:
-            st.markdown(
-                f'<img src="{n["img"]}" style="width:28%; border-radius:8px;">',
-                unsafe_allow_html=True
-            )
-
-        st.markdown(f"### {n['title']}")
-        st.markdown(f"[기사 보기]({n['link']})")
-
-        st.markdown(f"<div class='reason'>📌 {reason}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='insight'>💡 {insight}</div>", unsafe_allow_html=True)
-
-        st.markdown("</div>", unsafe_allow_html=True)
+if not news_data:
+    st.error("❌ 뉴스가 없습니다 (조건을 줄여보세요)")
 else:
-    st.info("검색 결과가 없습니다.")
+    for news in news_data:
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            if news["img"]:
+                st.image(news["img"], width=100)
+
+        with col2:
+            st.markdown(f"### {news['title']}")
+            st.markdown(f"[👉 기사 보러가기]({news['link']})")
+            if news["time"]:
+                st.caption(news["time"])
+
+# -------------------------------
+# 데이터 테이블
+# -------------------------------
+with st.expander("📊 데이터 보기"):
+    st.dataframe(pd.DataFrame(news_data))
