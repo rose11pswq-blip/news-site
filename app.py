@@ -3,10 +3,79 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-st.set_page_config(page_title="실시간 뉴스", layout="wide")
+# -------------------------------
+# 🔐 비밀번호 인증
+# -------------------------------
+PASSWORD = "duddjqqhsqn1!"
+
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
+if not st.session_state.auth:
+    st.title("🔐 뉴스 대시보드 로그인")
+
+    pw = st.text_input("비밀번호 입력", type="password")
+
+    if st.button("로그인"):
+        if pw == PASSWORD:
+            st.session_state.auth = True
+            st.rerun()
+        else:
+            st.error("❌ 비밀번호 틀림")
+
+    st.stop()
 
 # -------------------------------
-# 네이버 뉴스 크롤링
+# 기본 설정
+# -------------------------------
+st.set_page_config(page_title="뉴스 인사이트 대시보드", layout="wide")
+
+# -------------------------------
+# GPT 요약 (OpenAI API 필요)
+# -------------------------------
+def gpt_summary(title):
+    try:
+        import openai
+
+        openai.api_key = "YOUR_API_KEY"
+
+        prompt = f"""
+        다음 뉴스 제목을 기반으로:
+
+        1. 3줄 요약
+        2. 이 뉴스가 중요한 이유
+        3. 얻을 수 있는 인사이트
+
+        뉴스: {title}
+        """
+
+        res = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+
+        return res.choices[0].message.content
+
+    except:
+        return "⚠️ GPT 요약 실패 (API 키 확인 필요)"
+
+
+# -------------------------------
+# 중요 뉴스 필터 키워드
+# -------------------------------
+IMPORTANT_KEYWORDS = [
+    "시장", "점유율", "경쟁", "규제", "법안", "리스크",
+    "공급망", "투자", "인수", "합병", "M&A",
+    "지분", "물류", "AI", "반도체", "배터리"
+]
+
+def is_important(title):
+    return any(k in title for k in IMPORTANT_KEYWORDS)
+
+
+# -------------------------------
+# 네이버 크롤링
 # -------------------------------
 @st.cache_data(ttl=300)
 def crawl_naver(url, category_name):
@@ -17,27 +86,19 @@ def crawl_naver(url, category_name):
 
     try:
         res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code != 200:
-            return []
-
         soup = BeautifulSoup(res.text, "html.parser")
+
         articles = soup.select("li.sa_item, div.sa_item")
 
         news_list = []
 
         for article in articles:
             try:
-                title_tag = article.select_one(".sa_text_title")
-                if not title_tag:
-                    continue
-
-                title = title_tag.text.strip()
+                title = article.select_one(".sa_text_title").text.strip()
                 link = article.select_one("a")["href"]
 
                 img_tag = article.select_one("img")
-                img_url = None
-                if img_tag:
-                    img_url = img_tag.get("data-src") or img_tag.get("src")
+                img_url = img_tag.get("src") if img_tag else None
 
                 time_tag = article.select_one(".sa_text_datetime")
                 time_text = time_tag.text.strip() if time_tag else ""
@@ -49,7 +110,6 @@ def crawl_naver(url, category_name):
                     "time": time_text,
                     "category": category_name
                 })
-
             except:
                 continue
 
@@ -57,50 +117,6 @@ def crawl_naver(url, category_name):
 
     except:
         return []
-
-
-# -------------------------------
-# 구글 뉴스 (fallback)
-# -------------------------------
-@st.cache_data(ttl=300)
-def crawl_google(keyword):
-    url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
-
-    try:
-        res = requests.get(url, timeout=5)
-        soup = BeautifulSoup(res.text, "xml")
-
-        news_list = []
-
-        for item in soup.find_all("item")[:20]:
-            news_list.append({
-                "title": item.title.text,
-                "link": item.link.text,
-                "img": None,
-                "time": item.pubDate.text,
-                "category": "구글뉴스"
-            })
-
-        return news_list
-
-    except:
-        return []
-
-
-# -------------------------------
-# 시간 필터
-# -------------------------------
-def is_recent(news_time, hours):
-    try:
-        if "분 전" in news_time:
-            return int(news_time.replace("분 전", "")) <= hours * 60
-        elif "시간 전" in news_time:
-            return int(news_time.replace("시간 전", "")) <= hours
-        elif "일 전" in news_time:
-            return False
-    except:
-        return True
-    return True
 
 
 # -------------------------------
@@ -122,8 +138,8 @@ category_dict = {
 st.sidebar.title("⚙️ 설정")
 
 category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
-keyword_input = st.sidebar.text_input("키워드 (쉼표 구분)")
-time_value = st.sidebar.slider("몇 시간 이내", 0, 48, 0)
+keyword_input = st.sidebar.text_input("키워드")
+time_value = st.sidebar.slider("시간 필터", 0, 48, 0)
 
 # -------------------------------
 # 데이터 가져오기
@@ -136,34 +152,20 @@ with st.spinner("뉴스 불러오는 중..."):
         for cat, url in category_dict.items():
             if cat == "전체":
                 continue
-            data = crawl_naver(url, cat)
-            news_data.extend(data)
+            news_data.extend(crawl_naver(url, cat))
     else:
         news_data = crawl_naver(category_dict[category], category)
 
-    # 네이버 실패 시 fallback
-    if len(news_data) == 0:
-        st.warning("⚠️ 네이버 뉴스 실패 → 구글 뉴스로 대체")
-        search_keyword = keyword_input if keyword_input else "한국"
-        news_data = crawl_google(search_keyword)
+# -------------------------------
+# 중요 뉴스 필터
+# -------------------------------
+news_data = [n for n in news_data if is_important(n["title"])]
 
 # -------------------------------
 # 키워드 필터
 # -------------------------------
 if keyword_input:
-    keywords = [k.strip().lower() for k in keyword_input.split(",")]
-    news_data = [
-        n for n in news_data
-        if any(k in n["title"].lower() for k in keywords)
-    ]
-
-# -------------------------------
-# 시간 필터
-# -------------------------------
-if time_value > 0:
-    news_data = [
-        n for n in news_data if is_recent(n["time"], time_value)
-    ]
+    news_data = [n for n in news_data if keyword_input in n["title"]]
 
 # -------------------------------
 # 중복 제거
@@ -176,30 +178,38 @@ for n in news_data:
         unique_news.append(n)
         seen.add(n["title"])
 
-news_data = unique_news[:30]
+news_data = unique_news[:20]
 
 # -------------------------------
 # UI 출력
 # -------------------------------
-st.title("📰 실시간 뉴스")
+st.title("🧠 전략형 뉴스 인사이트")
 
 if not news_data:
-    st.error("❌ 뉴스 없음 (조건 줄여보세요)")
+    st.error("❌ 조건에 맞는 뉴스 없음")
 else:
     for news in news_data:
+
+        st.markdown("---")
+
         col1, col2 = st.columns([1, 3])
 
         with col1:
             if news["img"]:
-                st.image(news["img"], width=100)
+                st.image(news["img"], width=120)
 
         with col2:
             st.markdown(f"### {news['title']}")
-            st.markdown(f"[👉 기사 보러가기]({news['link']})")
             st.caption(f"{news['category']} | {news['time']}")
+            st.markdown(f"[👉 기사 보기]({news['link']})")
+
+            # GPT 분석
+            with st.expander("🤖 AI 분석 보기"):
+                result = gpt_summary(news["title"])
+                st.write(result)
 
 # -------------------------------
 # 데이터 테이블
 # -------------------------------
-with st.expander("📊 데이터 보기"):
+with st.expander("📊 데이터"):
     st.dataframe(pd.DataFrame(news_data))
