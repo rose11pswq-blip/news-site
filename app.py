@@ -6,50 +6,57 @@ from bs4 import BeautifulSoup
 # 페이지 설정
 # -------------------------------
 st.set_page_config(
-    page_title="전략 뉴스 큐레이션",
+    page_title="Strategic Intelligence",
     page_icon="🧠",
     layout="wide"
 )
 
 # -------------------------------
-# 스타일 (핵심🔥)
+# UI 스타일
 # -------------------------------
 st.markdown("""
 <style>
-body {
-    background-color: #f5f9ff;
-}
+body { background-color: #f4f6f9; }
 
 .main-title {
-    font-size: 36px;
-    font-weight: 800;
-    color: #1f4fff;
+    font-size: 34px;
+    font-weight: 700;
+    color: #1a2a4f;
 }
 
 .sub-title {
-    color: #6c8cff;
-    font-size: 14px;
+    color: #6b7a99;
+    font-size: 13px;
+}
+
+.search-box {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0px 3px 10px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
 }
 
 .news-card {
-    background-color: white;
-    padding: 20px;
-    border-radius: 15px;
-    margin-bottom: 20px;
-    box-shadow: 0px 4px 15px rgba(0,0,0,0.05);
+    background: white;
+    padding: 18px;
+    border-radius: 12px;
+    margin-bottom: 18px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.04);
 }
 
-.reason-box {
-    background-color: #e8f0ff;
-    padding: 10px;
-    border-radius: 8px;
-    margin-top: 10px;
+.reason {
+    background: #eef2ff;
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 13px;
 }
 
-.insight-box {
-    background-color: #eef4ff;
-    padding: 10px;
-    border-radius: 8px;
+.insight {
+    background: #f5f7ff;
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 13px;
     margin-top: 5px;
 }
 </style>
@@ -60,22 +67,21 @@ body {
 # -------------------------------
 PASSWORD = "duddjqqhsqn1!"
 
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+if "auth" not in st.session_state:
+    st.session_state.auth = False
 
-# -------------------------------
-# 로그인
-# -------------------------------
-def login_page():
-    st.markdown("<h2 class='main-title'>🔐 Access Required</h2>", unsafe_allow_html=True)
-    pw = st.text_input("비밀번호 입력", type="password")
+if not st.session_state.auth:
+    st.markdown("## 🔐 Private Access")
+    pw = st.text_input("비밀번호", type="password")
 
-    if st.button("접속"):
+    if st.button("입장"):
         if pw == PASSWORD:
-            st.session_state["authenticated"] = True
+            st.session_state.auth = True
             st.rerun()
         else:
             st.error("비밀번호 오류")
+
+    st.stop()
 
 # -------------------------------
 # 크롤링
@@ -87,130 +93,127 @@ def crawl_news():
     res = requests.get(url, headers=headers)
     soup = BeautifulSoup(res.text, "html.parser")
 
-    news_list = []
-    articles = soup.select(".sa_item")
-
-    for article in articles:
+    news = []
+    for a in soup.select(".sa_item"):
         try:
-            title = article.select_one(".sa_text_title").text.strip()
-            link = article.select_one("a")["href"]
+            title = a.select_one(".sa_text_title").text.strip()
+            link = a.select_one("a")["href"]
 
-            img_tag = article.select_one("img")
-            img_url = img_tag.get("data-src") if img_tag else None
+            img = a.select_one("img")
+            img_url = img.get("data-src") if img else None
 
-            news_list.append({
+            time_tag = a.select_one(".sa_text_datetime")
+            time_text = time_tag.text.strip() if time_tag else ""
+
+            news.append({
                 "title": title,
                 "link": link,
-                "img": img_url
+                "img": img_url,
+                "time": time_text
             })
         except:
             continue
-
-    return news_list
+    return news
 
 # -------------------------------
-# 전략 키워드
+# 시간 필터
 # -------------------------------
-strategic_keywords = [
-    "시장", "경쟁", "규제", "공급망", "리스크",
-    "투자", "M&A", "인수", "합병", "지분",
-    "물류", "기술", "AI", "플랫폼"
-]
+def is_recent(news_time, hours):
+    try:
+        if "분 전" in news_time:
+            m = int(news_time.replace("분 전",""))
+            return m <= hours * 60
+        elif "시간 전" in news_time:
+            h = int(news_time.replace("시간 전",""))
+            return h <= hours
+        elif "일 전" in news_time:
+            return False
+    except:
+        return True
+    return True
 
 # -------------------------------
 # 분석
 # -------------------------------
-def analyze_news(title):
-    reason = []
-    insight = []
-
+def analyze(title):
     if "시장" in title:
-        reason.append("시장 구조 변화")
-        insight.append("시장 재편 가능성")
-
+        return "시장 구조 변화", "시장 재편 가능성"
     if "경쟁" in title:
-        reason.append("경쟁사 동향")
-        insight.append("경쟁 심화 가능성")
-
+        return "경쟁사 동향", "경쟁 심화 가능성"
     if "규제" in title:
-        reason.append("규제 이슈")
-        insight.append("사업 리스크 증가")
-
+        return "규제 리스크", "사업 영향 가능"
     if "투자" in title or "M&A" in title:
-        reason.append("투자 이벤트")
-        insight.append("기업 가치 변동 가능")
-
+        return "투자 이벤트", "기업 가치 변화"
     if "공급망" in title:
-        reason.append("공급망 리스크")
-        insight.append("원가 영향 가능")
-
-    if not reason:
-        reason.append("핵심 뉴스")
-        insight.append("추가 분석 필요")
-
-    return ", ".join(reason), ", ".join(insight)
+        return "공급망 리스크", "비용 영향"
+    return "핵심 뉴스", "추가 분석 필요"
 
 # -------------------------------
-# 메인
+# 헤더
 # -------------------------------
-def main_page():
+st.markdown("<div class='main-title'>Strategic Intelligence</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>made by sw.park</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='main-title'>🧠 Strategic News Dashboard</div>", unsafe_allow_html=True)
-    st.markdown("<div class='sub-title'>made by sw.park</div>", unsafe_allow_html=True)
+# -------------------------------
+# 🔥 엔터 검색 (핵심)
+# -------------------------------
+with st.form("search_form"):
+    st.markdown("<div class='search-box'>", unsafe_allow_html=True)
 
-    keyword_input = st.text_input("🔍 키워드 입력 (쉼표로 구분)")
+    col1, col2 = st.columns([3,1])
 
-    news_data = crawl_news()
+    with col1:
+        keyword = st.text_input("🔍 키워드 입력 (쉼표 가능)")
 
-    # 사용자 키워드 필터
-    if keyword_input:
-        user_keywords = [k.strip().lower() for k in keyword_input.split(",")]
-        news_data = [
-            n for n in news_data
-            if any(k in n["title"].lower() for k in user_keywords)
-        ]
+    with col2:
+        time_value = st.number_input("시간", 0, 48, 0)
 
-    # 전략 필터
-    news_data = [
-        n for n in news_data
-        if any(k in n["title"] for k in strategic_keywords)
-    ]
+    submitted = st.form_submit_button("검색 (엔터 가능)")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# 검색 실행
+# -------------------------------
+if submitted:
+
+    data = crawl_news()
+
+    # 키워드 필터
+    if keyword:
+        kws = [k.strip().lower() for k in keyword.split(",")]
+        data = [n for n in data if any(k in n["title"].lower() for k in kws)]
+
+    # 시간 필터
+    if time_value > 0:
+        data = [n for n in data if is_recent(n["time"], time_value)]
 
     # 중복 제거
     seen = set()
-    unique = []
-
-    for n in news_data:
+    result = []
+    for n in data:
         if n["title"] not in seen:
-            unique.append(n)
+            result.append(n)
             seen.add(n["title"])
 
-    news_data = unique[:20]
+    result = result[:20]
 
     # 출력
-    for news in news_data:
-        reason, insight = analyze_news(news["title"])
+    for n in result:
+        reason, insight = analyze(n["title"])
 
         st.markdown("<div class='news-card'>", unsafe_allow_html=True)
 
-        if news["img"]:
+        if n["img"]:
             st.markdown(
-                f'<img src="{news["img"]}" style="width:30%; border-radius:10px;">',
+                f'<img src="{n["img"]}" style="width:28%; border-radius:8px;">',
                 unsafe_allow_html=True
             )
 
-        st.markdown(f"### {news['title']}")
-        st.markdown(f"[👉 기사 보기]({news['link']})")
+        st.markdown(f"### {n['title']}")
+        st.markdown(f"[기사 보기]({n['link']})")
 
-        st.markdown(f"<div class='reason-box'>📌 {reason}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='insight-box'>💡 {insight}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='reason'>📌 {reason}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='insight'>💡 {insight}</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# 실행
-# -------------------------------
-if not st.session_state["authenticated"]:
-    login_page()
-else:
-    main_page()
