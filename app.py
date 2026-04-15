@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # -------------------------------
-# UI 스타일 (고급 유지)
+# UI 스타일
 # -------------------------------
 st.markdown("""
 <style>
@@ -145,13 +145,13 @@ def analyze(title):
     return "핵심 뉴스", "추가 분석 필요"
 
 # -------------------------------
-# 상태값 (자동 검색 핵심)
+# 상태 초기화 (핵심🔥)
 # -------------------------------
 if "keyword" not in st.session_state:
     st.session_state.keyword = ""
 
 if "time_value" not in st.session_state:
-    st.session_state.time_value = 0
+    st.session_state.time_value = 24  # 기본값 24시간
 
 # -------------------------------
 # 헤더
@@ -160,7 +160,7 @@ st.markdown("<div class='main-title'>Strategic Intelligence</div>", unsafe_allow
 st.markdown("<div class='sub-title'>made by sw.park</div>", unsafe_allow_html=True)
 
 # -------------------------------
-# 검색 UI (자동 검색)
+# 검색 UI
 # -------------------------------
 st.markdown("<div class='search-box'>", unsafe_allow_html=True)
 
@@ -182,48 +182,39 @@ with col2:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------
-# 값 변경 감지
+# 상태 업데이트
 # -------------------------------
-changed = False
-
-if keyword != st.session_state.keyword:
-    st.session_state.keyword = keyword
-    changed = True
-
-if time_value != st.session_state.time_value:
-    st.session_state.time_value = time_value
-    changed = True
+st.session_state.keyword = keyword
+st.session_state.time_value = time_value
 
 # -------------------------------
-# 검색 실행
+# 🔥 항상 실행 (핵심 수정)
 # -------------------------------
-if st.session_state.keyword or st.session_state.time_value > 0:
+data = crawl_news()
 
-    data = crawl_news()
+# 키워드 필터
+if keyword:
+    kws = [k.strip().lower() for k in keyword.split(",")]
+    data = [n for n in data if any(k in n["title"].lower() for k in kws)]
 
-    keyword = st.session_state.keyword
-    time_value = st.session_state.time_value
+# 시간 필터
+if time_value > 0:
+    data = [n for n in data if is_recent(n["time"], time_value)]
 
-    # 키워드 필터
-    if keyword:
-        kws = [k.strip().lower() for k in keyword.split(",")]
-        data = [n for n in data if any(k in n["title"].lower() for k in kws)]
+# 중복 제거
+seen = set()
+result = []
+for n in data:
+    if n["title"] not in seen:
+        result.append(n)
+        seen.add(n["title"])
 
-    # 시간 필터
-    if time_value > 0:
-        data = [n for n in data if is_recent(n["time"], time_value)]
+result = result[:20]
 
-    # 중복 제거
-    seen = set()
-    result = []
-    for n in data:
-        if n["title"] not in seen:
-            result.append(n)
-            seen.add(n["title"])
-
-    result = result[:20]
-
-    # 출력
+# -------------------------------
+# 결과 출력
+# -------------------------------
+if result:
     for n in result:
         reason, insight = analyze(n["title"])
 
@@ -242,3 +233,5 @@ if st.session_state.keyword or st.session_state.time_value > 0:
         st.markdown(f"<div class='insight'>💡 {insight}</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
+else:
+    st.info("검색 결과가 없습니다.")
