@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # -------------------------------
-# 프리미엄 UI 스타일 (유지)
+# UI 스타일 (고급 유지)
 # -------------------------------
 st.markdown("""
 <style>
@@ -145,11 +145,12 @@ def analyze(title):
     return "핵심 뉴스", "추가 분석 필요"
 
 # -------------------------------
-# 🔥 검색 상태 저장 (핵심)
+# 상태값 (자동 검색 핵심)
 # -------------------------------
-if "search_trigger" not in st.session_state:
-    st.session_state.search_trigger = False
+if "keyword" not in st.session_state:
     st.session_state.keyword = ""
+
+if "time_value" not in st.session_state:
     st.session_state.time_value = 0
 
 # -------------------------------
@@ -159,32 +160,44 @@ st.markdown("<div class='main-title'>Strategic Intelligence</div>", unsafe_allow
 st.markdown("<div class='sub-title'>made by sw.park</div>", unsafe_allow_html=True)
 
 # -------------------------------
-# 🔥 엔터 검색 UI (디자인 유지)
+# 검색 UI (자동 검색)
 # -------------------------------
-with st.form("search_form"):
-    st.markdown("<div class='search-box'>", unsafe_allow_html=True)
+st.markdown("<div class='search-box'>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns([3,1])
+col1, col2 = st.columns([3,1])
 
-    with col1:
-        keyword = st.text_input("🔍 키워드 입력 (쉼표 가능)")
+with col1:
+    keyword = st.text_input(
+        "🔍 키워드 입력 (쉼표 가능)",
+        value=st.session_state.keyword
+    )
 
-    with col2:
-        time_value = st.number_input("시간", 0, 48, 0)
+with col2:
+    time_value = st.number_input(
+        "시간",
+        0, 48,
+        value=st.session_state.time_value
+    )
 
-    submitted = st.form_submit_button("검색 (엔터 가능)")
-
-    if submitted:
-        st.session_state.search_trigger = True
-        st.session_state.keyword = keyword
-        st.session_state.time_value = time_value
-
-    st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------
-# 🔥 검색 실행
+# 값 변경 감지
 # -------------------------------
-if st.session_state.search_trigger:
+changed = False
+
+if keyword != st.session_state.keyword:
+    st.session_state.keyword = keyword
+    changed = True
+
+if time_value != st.session_state.time_value:
+    st.session_state.time_value = time_value
+    changed = True
+
+# -------------------------------
+# 검색 실행
+# -------------------------------
+if st.session_state.keyword or st.session_state.time_value > 0:
 
     data = crawl_news()
 
@@ -210,7 +223,7 @@ if st.session_state.search_trigger:
 
     result = result[:20]
 
-    # 출력 (UI 유지)
+    # 출력
     for n in result:
         reason, insight = analyze(n["title"])
 
