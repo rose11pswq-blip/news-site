@@ -1,181 +1,175 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import re
-
-st.set_page_config(page_title="Strategic Intelligence", layout="wide")
-
-# -------------------------------
-# 비밀번호
-# -------------------------------
-PASSWORD = "duddjqqhsqn1!"
-
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-
-if not st.session_state.auth:
-    pw = st.text_input("비밀번호", type="password")
-    if st.button("입장"):
-        if pw == PASSWORD:
-            st.session_state.auth = True
-            st.rerun()
-    st.stop()
+import pandas as pd
+import datetime
 
 # -------------------------------
-# 시간 파싱 함수 🔥
+# 기본 설정
 # -------------------------------
-def parse_time(text):
-    try:
-        if "분 전" in text:
-            return int(re.findall(r'\d+', text)[0]) / 60
-        if "시간 전" in text:
-            return int(re.findall(r'\d+', text)[0])
-        if "일 전" in text:
-            return int(re.findall(r'\d+', text)[0]) * 24
-    except:
-        return 999
-    return 999
+st.set_page_config(
+    page_title="실시간 뉴스 사이트",
+    page_icon="📰",
+    layout="wide"
+)
 
 # -------------------------------
-# 네이버 뉴스
+# 크롤링 함수
 # -------------------------------
-def crawl_naver(keyword):
-    url = f"https://search.naver.com/search.naver?where=news&query={keyword}"
+@st.cache_data(ttl=300)
+def crawl_news(url):
     headers = {"User-Agent": "Mozilla/5.0"}
-
     res = requests.get(url, headers=headers)
     soup = BeautifulSoup(res.text, "html.parser")
 
-    news = []
-    items = soup.select(".news_area")
+    news_list = []
+    articles = soup.select(".sa_item")
 
-    for item in items:
+    for article in articles:
         try:
-            title = item.select_one(".news_tit").text
-            link = item.select_one(".news_tit")["href"]
+            title = article.select_one(".sa_text_title").text.strip()
+            link = article.select_one("a")["href"]
 
-            img_tag = item.select_one("img")
-            img_url = img_tag["src"] if img_tag else None
+            # 이미지
+            img_tag = article.select_one("img")
+            img_url = None
+            if img_tag:
+                img_url = img_tag.get("data-src") or img_tag.get("src")
 
-            info = item.select_one(".info_group").text
-            time_value = parse_time(info)
+            # 시간
+            time_tag = article.select_one(".sa_text_datetime")
+            time_text = time_tag.text.strip() if time_tag else ""
 
-            news.append({
+            news_list.append({
                 "title": title,
                 "link": link,
                 "img": img_url,
-                "time": time_value,
-                "source": "NAVER"
+                "time": time_text
             })
         except:
             continue
 
-    return news
+    return news_list
 
 # -------------------------------
-# 구글 뉴스
+# 시간 필터 함수
 # -------------------------------
-def crawl_google(keyword):
-    url = f"https://news.google.com/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
-
-    news = []
-    items = soup.select("article")
-
-    for item in items:
-        try:
-            title = item.select_one("h3").text
-            link = "https://news.google.com" + item.select_one("a")["href"][1:]
-
-            news.append({
-                "title": title,
-                "link": link,
-                "img": None,
-                "time": 999,  # 시간 없음 → 필터에서 제외됨
-                "source": "GOOGLE"
-            })
-        except:
-            continue
-
-    return news
+def is_recent(news_time, hours):
+    try:
+        if "분 전" in news_time:
+            minutes = int(news_time.replace("분 전", ""))
+            return minutes <= hours * 60
+        elif "시간 전" in news_time:
+            h = int(news_time.replace("시간 전", ""))
+            return h <= hours
+        elif "일 전" in news_time:
+            return False
+    except:
+        return True
+    return True
 
 # -------------------------------
-# 분석
+# 카테고리
 # -------------------------------
-def analyze(title):
-    if "시장" in title:
-        return "시장 구조 변화", "시장 재편 가능성"
-    if "경쟁" in title:
-        return "경쟁사 동향", "경쟁 심화 가능성"
-    if "규제" in title:
-        return "규제 리스크", "사업 영향 가능"
-    if "투자" in title or "M&A" in title:
-        return "투자 이벤트", "기업 가치 변화"
-    return "핵심 뉴스", "추가 분석 필요"
+category_dict = {
+    "정치": "https://news.naver.com/section/100",
+    "경제": "https://news.naver.com/section/101",
+    "사회": "https://news.naver.com/section/102",
+    "생활/문화": "https://news.naver.com/section/103",
+    "세계": "https://news.naver.com/section/104",
+    "IT/과학": "https://news.naver.com/section/105"
+}
 
 # -------------------------------
-# UI
+# 사이드바
 # -------------------------------
-st.title("Strategic Intelligence")
-st.caption("made by sw.park")
+st.sidebar.title("⚙️ 설정")
 
-col1, col2 = st.columns([3,1])
+category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
 
-with col1:
-    keyword = st.text_input("🔍 키워드 (쉼표 가능)", value="경제")
+keyword_input = st.sidebar.text_input("키워드 (쉼표로 구분)")
 
-with col2:
-    hours = st.number_input("시간 (시간 단위)", 0, 48, 24)
+time_value = st.sidebar.number_input(
+    "몇 시간 이내 뉴스 (0 = 전체)",
+    min_value=0,
+    max_value=48,
+    value=0,
+    step=1
+)
 
-# -------------------------------
-# 실행
-# -------------------------------
-keywords = [k.strip() for k in keyword.split(",")]
-
-all_news = []
-
-for kw in keywords:
-    all_news.extend(crawl_naver(kw))
-    all_news.extend(crawl_google(kw))
+refresh = st.sidebar.button("🔄 새로고침")
 
 # -------------------------------
-# 시간 필터 🔥
+# 데이터 가져오기
 # -------------------------------
-filtered = [n for n in all_news if n["time"] <= hours]
+if refresh:
+    st.cache_data.clear()
+
+news_data = crawl_news(category_dict[category])
+
+# -------------------------------
+# 키워드 필터
+# -------------------------------
+if keyword_input:
+    keywords = [k.strip().lower() for k in keyword_input.split(",")]
+
+    news_data = [
+        n for n in news_data
+        if any(k in n["title"].lower() for k in keywords)
+    ]
+
+# -------------------------------
+# 시간 필터
+# -------------------------------
+if time_value > 0:
+    news_data = [
+        n for n in news_data
+        if is_recent(n["time"], time_value)
+    ]
 
 # -------------------------------
 # 중복 제거
 # -------------------------------
-seen = set()
-result = []
+seen_titles = set()
+unique_news = []
 
-for n in filtered:
-    if n["title"] not in seen:
-        result.append(n)
-        seen.add(n["title"])
-
-result = result[:20]
+for n in news_data:
+    if n["title"] not in seen_titles:
+        unique_news.append(n)
+        seen_titles.add(n["title"])
 
 # -------------------------------
-# 출력
+# 20개 제한
 # -------------------------------
-if result:
-    for n in result:
-        reason, insight = analyze(n["title"])
+news_data = unique_news[:20]
 
-        st.markdown("---")
+# -------------------------------
+# UI 출력
+# -------------------------------
+st.title("📰 실시간 뉴스")
 
-        if n["img"]:
-            st.image(n["img"], width=150)
+if time_value > 0:
+    st.write(f"⏱ 최근 {time_value}시간 이내 뉴스")
 
-        st.markdown(f"### {n['title']}")
-        st.markdown(f"[기사 보기]({n['link']})")
-        st.caption(f"{n['source']} | {n['time']}시간 이내")
+for news in news_data:
+    col1, col2 = st.columns([1, 3])  # 이미지 영역 줄임
 
-        st.write(f"📌 {reason}")
-        st.write(f"💡 {insight}")
-else:
-    st.warning("검색 결과가 없습니다.")
+    with col1:
+        if news["img"]:
+            st.markdown(
+                f'<img src="{news["img"]}" style="width:33%; border-radius:8px;">',
+                unsafe_allow_html=True
+            )
+
+    with col2:
+        st.markdown(f"### {news['title']}")
+        st.markdown(f"[👉 기사 보러가기]({news['link']})")
+        if news["time"]:
+            st.caption(f"⏱ {news['time']}")
+
+# -------------------------------
+# 데이터 테이블
+# -------------------------------
+with st.expander("📊 데이터 보기"):
+    df = pd.DataFrame(news_data)
+    st.dataframe(df)
