@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
 
 # -------------------------------
 # 🔐 비밀번호 인증
@@ -12,53 +11,65 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.markdown("## 🔐 Secure Access")
-    pw = st.text_input("Password", type="password")
+    st.markdown("## 🔐 대시보드 로그인")
+    pw = st.text_input("비밀번호", type="password")
 
-    if st.button("Login"):
+    if st.button("로그인"):
         if pw == PASSWORD:
             st.session_state.auth = True
             st.rerun()
         else:
-            st.error("Invalid password")
+            st.error("비밀번호가 틀렸습니다")
 
     st.stop()
 
 # -------------------------------
 # 기본 설정
 # -------------------------------
-st.set_page_config(page_title="Insight Dashboard", layout="wide")
+st.set_page_config(page_title="뉴스 인사이트", layout="wide")
 
 # -------------------------------
-# 🎨 SaaS 스타일 UI
+# 🎨 한국형 고급 SaaS UI
 # -------------------------------
 st.markdown("""
 <style>
-.main-title {
-    font-size:28px;
-    font-weight:700;
+body {
+    background-color:#f7f8fa;
+}
+.title {
+    font-size:30px;
+    font-weight:800;
+    margin-bottom:20px;
 }
 .card {
+    background:white;
     padding:20px;
-    border-radius:12px;
-    background-color:#111;
-    margin-bottom:15px;
+    border-radius:14px;
+    margin-bottom:18px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.05);
 }
 .summary {
-    font-size:14px;
-    color:#aaa;
+    font-size:15px;
+    color:#333;
+    margin-top:10px;
+    line-height:1.5;
 }
 .meta {
     font-size:12px;
     color:#888;
+    margin-top:8px;
+}
+.link {
+    font-size:13px;
+    color:#1a73e8;
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">📊 Insight Intelligence Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="title">📊 프리미엄 뉴스 인사이트</div>', unsafe_allow_html=True)
 
 # -------------------------------
-# 📄 기사 본문 크롤링
+# 📄 본문 가져오기
 # -------------------------------
 def get_article_content(url):
     try:
@@ -75,19 +86,25 @@ def get_article_content(url):
         return ""
 
 # -------------------------------
-# 🤖 GPT 요약 (본문 기반 / 2줄)
-# 👉 코드 숨김 (노출 안됨)
+# 🤖 GPT 요약 (본문 → 실패시 제목)
 # -------------------------------
-def gpt_summary(content):
+def gpt_summary(content, title):
     try:
         import openai
         openai.api_key = "YOUR_API_KEY"
 
-        prompt = f"""
-        아래 뉴스 본문을 2줄로 핵심 요약해줘:
+        if content:
+            prompt = f"""
+            아래 뉴스 본문을 핵심 2줄로 요약해줘:
 
-        {content[:1500]}
-        """
+            {content[:1500]}
+            """
+        else:
+            prompt = f"""
+            아래 뉴스 제목을 기반으로 핵심 2줄 요약:
+
+            {title}
+            """
 
         res = openai.ChatCompletion.create(
             model="gpt-4o-mini",
@@ -98,10 +115,11 @@ def gpt_summary(content):
         return res.choices[0].message.content.strip()
 
     except:
-        return "요약 생성 실패"
+        # GPT 실패 시 기본 fallback
+        return f"{title}\n핵심 이슈 중심 뉴스 (요약 실패)"
 
 # -------------------------------
-# 중요도 점수
+# 중요도 정렬
 # -------------------------------
 def importance_score(title):
     keywords = [
@@ -161,10 +179,10 @@ category_dict = {
 # -------------------------------
 # 사이드바
 # -------------------------------
-st.sidebar.title("Settings")
+st.sidebar.title("⚙️ 설정")
 
-category = st.sidebar.selectbox("Category", list(category_dict.keys()))
-keyword = st.sidebar.text_input("Keyword")
+category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
+keyword = st.sidebar.text_input("키워드")
 
 # -------------------------------
 # 데이터 가져오기
@@ -189,18 +207,25 @@ news_data.sort(key=lambda x: importance_score(x["title"]), reverse=True)
 news_data = news_data[:15]
 
 # -------------------------------
-# UI 출력 (SaaS 카드형)
+# UI 출력 (이미지 포함 카드형)
 # -------------------------------
 for news in news_data:
 
     content = get_article_content(news["link"])
-    summary = gpt_summary(content) if content else "본문 없음"
+    summary = gpt_summary(content, news["title"])
 
-    st.markdown(f"""
-    <div class="card">
-        <div><b>{news['title']}</b></div>
-        <div class="summary">{summary}</div>
-        <div class="meta">{news['category']} | {news['time']}</div>
-        <a href="{news['link']}" target="_blank">기사 보기</a>
-    </div>
-    """, unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 4])
+
+    with col1:
+        if news["img"]:
+            st.image(news["img"], use_container_width=True)
+
+    with col2:
+        st.markdown(f"""
+        <div class="card">
+            <div><b>{news['title']}</b></div>
+            <div class="summary">{summary}</div>
+            <div class="meta">{news['category']} | {news['time']}</div>
+            <div class="link"><a href="{news['link']}" target="_blank">기사 보기</a></div>
+        </div>
+        """, unsafe_allow_html=True)
