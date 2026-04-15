@@ -9,7 +9,7 @@ st.set_page_config(page_title="실시간 뉴스", layout="wide")
 # 네이버 뉴스 크롤링
 # -------------------------------
 @st.cache_data(ttl=300)
-def crawl_naver(url):
+def crawl_naver(url, category_name):
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Referer": "https://news.naver.com/"
@@ -21,8 +21,6 @@ def crawl_naver(url):
             return []
 
         soup = BeautifulSoup(res.text, "html.parser")
-
-        # 최신 대응 선택자
         articles = soup.select("li.sa_item, div.sa_item")
 
         news_list = []
@@ -48,7 +46,8 @@ def crawl_naver(url):
                     "title": title,
                     "link": link,
                     "img": img_url,
-                    "time": time_text
+                    "time": time_text,
+                    "category": category_name
                 })
 
             except:
@@ -78,7 +77,8 @@ def crawl_google(keyword):
                 "title": item.title.text,
                 "link": item.link.text,
                 "img": None,
-                "time": item.pubDate.text
+                "time": item.pubDate.text,
+                "category": "구글뉴스"
             })
 
         return news_list
@@ -107,6 +107,7 @@ def is_recent(news_time, hours):
 # 카테고리
 # -------------------------------
 category_dict = {
+    "전체": "ALL",
     "정치": "https://news.naver.com/section/100",
     "경제": "https://news.naver.com/section/101",
     "사회": "https://news.naver.com/section/102",
@@ -125,15 +126,24 @@ keyword_input = st.sidebar.text_input("키워드 (쉼표 구분)")
 time_value = st.sidebar.slider("몇 시간 이내", 0, 48, 0)
 
 # -------------------------------
-# 데이터 가져오기 (자동 실행)
+# 데이터 가져오기
 # -------------------------------
 with st.spinner("뉴스 불러오는 중..."):
 
-    news_data = crawl_naver(category_dict[category])
+    news_data = []
 
-    # 네이버 실패 시 자동 fallback
+    if category == "전체":
+        for cat, url in category_dict.items():
+            if cat == "전체":
+                continue
+            data = crawl_naver(url, cat)
+            news_data.extend(data)
+    else:
+        news_data = crawl_naver(category_dict[category], category)
+
+    # 네이버 실패 시 fallback
     if len(news_data) == 0:
-        st.warning("⚠️ 네이버 뉴스 실패 → 구글 뉴스로 대체합니다")
+        st.warning("⚠️ 네이버 뉴스 실패 → 구글 뉴스로 대체")
         search_keyword = keyword_input if keyword_input else "한국"
         news_data = crawl_google(search_keyword)
 
@@ -166,7 +176,7 @@ for n in news_data:
         unique_news.append(n)
         seen.add(n["title"])
 
-news_data = unique_news[:20]
+news_data = unique_news[:30]
 
 # -------------------------------
 # UI 출력
@@ -174,7 +184,7 @@ news_data = unique_news[:20]
 st.title("📰 실시간 뉴스")
 
 if not news_data:
-    st.error("❌ 뉴스가 없습니다 (조건을 줄여보세요)")
+    st.error("❌ 뉴스 없음 (조건 줄여보세요)")
 else:
     for news in news_data:
         col1, col2 = st.columns([1, 3])
@@ -186,8 +196,7 @@ else:
         with col2:
             st.markdown(f"### {news['title']}")
             st.markdown(f"[👉 기사 보러가기]({news['link']})")
-            if news["time"]:
-                st.caption(news["time"])
+            st.caption(f"{news['category']} | {news['time']}")
 
 # -------------------------------
 # 데이터 테이블
