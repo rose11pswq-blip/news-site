@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import pandas as pd
 
 # -------------------------------
 # 🔐 비밀번호 인증
@@ -11,158 +12,112 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.markdown("## 🔐 대시보드 로그인")
-    pw = st.text_input("비밀번호", type="password")
+    st.title("🔐 뉴스 대시보드 로그인")
+
+    pw = st.text_input("비밀번호 입력", type="password")
 
     if st.button("로그인"):
         if pw == PASSWORD:
             st.session_state.auth = True
             st.rerun()
         else:
-            st.error("비밀번호가 틀렸습니다")
+            st.error("❌ 비밀번호 틀림")
 
     st.stop()
 
 # -------------------------------
 # 기본 설정
 # -------------------------------
-st.set_page_config(page_title="뉴스 인사이트", layout="wide")
+st.set_page_config(page_title="뉴스 인사이트 대시보드", layout="wide")
 
 # -------------------------------
-# 🎨 한국형 고급 SaaS UI
+# GPT 요약 (OpenAI API 필요)
 # -------------------------------
-st.markdown("""
-<style>
-body {
-    background-color:#f7f8fa;
-}
-.title {
-    font-size:30px;
-    font-weight:800;
-    margin-bottom:20px;
-}
-.card {
-    background:white;
-    padding:20px;
-    border-radius:14px;
-    margin-bottom:18px;
-    box-shadow:0 4px 12px rgba(0,0,0,0.05);
-}
-.summary {
-    font-size:15px;
-    color:#333;
-    margin-top:10px;
-    line-height:1.5;
-}
-.meta {
-    font-size:12px;
-    color:#888;
-    margin-top:8px;
-}
-.link {
-    font-size:13px;
-    color:#1a73e8;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="title">📊 프리미엄 뉴스 인사이트</div>', unsafe_allow_html=True)
-
-# -------------------------------
-# 📄 본문 가져오기
-# -------------------------------
-def get_article_content(url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(res.text, "html.parser")
-
-        content = soup.select_one("#dic_area")
-        if content:
-            return content.text.strip()
-
-        return ""
-    except:
-        return ""
-
-# -------------------------------
-# 🤖 GPT 요약 (본문 → 실패시 제목)
-# -------------------------------
-def gpt_summary(content, title):
+def gpt_summary(title):
     try:
         import openai
+
         openai.api_key = "YOUR_API_KEY"
 
-        if content:
-            prompt = f"""
-            아래 뉴스 본문을 핵심 2줄로 요약해줘:
+        prompt = f"""
+        다음 뉴스 제목을 기반으로:
 
-            {content[:1500]}
-            """
-        else:
-            prompt = f"""
-            아래 뉴스 제목을 기반으로 핵심 2줄 요약:
+        1. 3줄 요약
+        2. 이 뉴스가 중요한 이유
+        3. 얻을 수 있는 인사이트
 
-            {title}
-            """
+        뉴스: {title}
+        """
 
         res = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=100
+            max_tokens=200
         )
 
-        return res.choices[0].message.content.strip()
+        return res.choices[0].message.content
 
     except:
-        # GPT 실패 시 기본 fallback
-        return f"{title}\n핵심 이슈 중심 뉴스 (요약 실패)"
+        return "⚠️ GPT 요약 실패 (API 키 확인 필요)"
+
 
 # -------------------------------
-# 중요도 정렬
+# 중요 뉴스 필터 키워드
 # -------------------------------
-def importance_score(title):
-    keywords = [
-        "시장","경쟁","규제","투자","인수","합병",
-        "AI","반도체","금리","환율","배터리"
-    ]
-    return sum(1 for k in keywords if k in title)
+IMPORTANT_KEYWORDS = [
+    "유통", "물류", "식품", "택배", "패션", "뷰티",
+    "산업재", "소비재", "이커머스", "온라인", "자사몰",
+    "쿠팡", "네이버", "소비자", "물가" 
+]
+
+def is_important(title):
+    return any(k in title for k in IMPORTANT_KEYWORDS)
+
 
 # -------------------------------
 # 네이버 크롤링
 # -------------------------------
 @st.cache_data(ttl=300)
 def crawl_naver(url, category_name):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://news.naver.com/"
+    }
 
-    soup = BeautifulSoup(res.text, "html.parser")
-    articles = soup.select("li.sa_item, div.sa_item")
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, "html.parser")
 
-    news_list = []
+        articles = soup.select("li.sa_item, div.sa_item")
 
-    for article in articles:
-        try:
-            title = article.select_one(".sa_text_title").text.strip()
-            link = article.select_one("a")["href"]
+        news_list = []
 
-            img_tag = article.select_one("img")
-            img_url = img_tag.get("src") if img_tag else None
+        for article in articles:
+            try:
+                title = article.select_one(".sa_text_title").text.strip()
+                link = article.select_one("a")["href"]
 
-            time_tag = article.select_one(".sa_text_datetime")
-            time_text = time_tag.text.strip() if time_tag else ""
+                img_tag = article.select_one("img")
+                img_url = img_tag.get("src") if img_tag else None
 
-            news_list.append({
-                "title": title,
-                "link": link,
-                "img": img_url,
-                "time": time_text,
-                "category": category_name
-            })
-        except:
-            continue
+                time_tag = article.select_one(".sa_text_datetime")
+                time_text = time_tag.text.strip() if time_tag else ""
 
-    return news_list
+                news_list.append({
+                    "title": title,
+                    "link": link,
+                    "img": img_url,
+                    "time": time_text,
+                    "category": category_name
+                })
+            except:
+                continue
+
+        return news_list
+
+    except:
+        return []
+
 
 # -------------------------------
 # 카테고리
@@ -172,8 +127,9 @@ category_dict = {
     "정치": "https://news.naver.com/section/100",
     "경제": "https://news.naver.com/section/101",
     "사회": "https://news.naver.com/section/102",
+    "생활/문화": "https://news.naver.com/section/103",
     "세계": "https://news.naver.com/section/104",
-    "IT": "https://news.naver.com/section/105"
+    "IT/과학": "https://news.naver.com/section/105"
 }
 
 # -------------------------------
@@ -182,50 +138,78 @@ category_dict = {
 st.sidebar.title("⚙️ 설정")
 
 category = st.sidebar.selectbox("카테고리", list(category_dict.keys()))
-keyword = st.sidebar.text_input("키워드")
+keyword_input = st.sidebar.text_input("키워드")
+time_value = st.sidebar.slider("시간 필터", 0, 48, 0)
 
 # -------------------------------
 # 데이터 가져오기
 # -------------------------------
-news_data = []
+with st.spinner("뉴스 불러오는 중..."):
 
-if category == "전체":
-    for cat, url in category_dict.items():
-        if cat == "전체":
-            continue
-        news_data.extend(crawl_naver(url, cat))
-else:
-    news_data = crawl_naver(category_dict[category], category)
+    news_data = []
 
+    if category == "전체":
+        for cat, url in category_dict.items():
+            if cat == "전체":
+                continue
+            news_data.extend(crawl_naver(url, cat))
+    else:
+        news_data = crawl_naver(category_dict[category], category)
+
+# -------------------------------
+# 중요 뉴스 필터
+# -------------------------------
+news_data = [n for n in news_data if is_important(n["title"])]
+
+# -------------------------------
 # 키워드 필터
-if keyword:
-    news_data = [n for n in news_data if keyword in n["title"]]
-
-# 중요도 정렬
-news_data.sort(key=lambda x: importance_score(x["title"]), reverse=True)
-
-news_data = news_data[:15]
+# -------------------------------
+if keyword_input:
+    news_data = [n for n in news_data if keyword_input in n["title"]]
 
 # -------------------------------
-# UI 출력 (이미지 포함 카드형)
+# 중복 제거
 # -------------------------------
-for news in news_data:
+seen = set()
+unique_news = []
 
-    content = get_article_content(news["link"])
-    summary = gpt_summary(content, news["title"])
+for n in news_data:
+    if n["title"] not in seen:
+        unique_news.append(n)
+        seen.add(n["title"])
 
-    col1, col2 = st.columns([1, 4])
+news_data = unique_news[:20]
 
-    with col1:
-        if news["img"]:
-            st.image(news["img"], use_container_width=True)
+# -------------------------------
+# UI 출력
+# -------------------------------
+st.title("🧠 전략형 뉴스 인사이트")
 
-    with col2:
-        st.markdown(f"""
-        <div class="card">
-            <div><b>{news['title']}</b></div>
-            <div class="summary">{summary}</div>
-            <div class="meta">{news['category']} | {news['time']}</div>
-            <div class="link"><a href="{news['link']}" target="_blank">기사 보기</a></div>
-        </div>
-        """, unsafe_allow_html=True)
+if not news_data:
+    st.error("❌ 조건에 맞는 뉴스 없음")
+else:
+    for news in news_data:
+
+        st.markdown("---")
+
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            if news["img"]:
+                st.image(news["img"], width=120)
+
+        with col2:
+            st.markdown(f"### {news['title']}")
+            st.caption(f"{news['category']} | {news['time']}")
+            st.markdown(f"[👉 기사 보기]({news['link']})")
+
+            # GPT 분석
+            with st.expander("🤖 AI 분석 보기"):
+                result = gpt_summary(news["title"])
+                st.write(result)
+
+# -------------------------------
+# 데이터 테이블
+# -------------------------------
+with st.expander("📊 데이터"):
+    st.dataframe(pd.DataFrame(news_data))
